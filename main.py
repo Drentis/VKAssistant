@@ -253,92 +253,144 @@ def get_items_keyboard(list_type: str, category: str = None, settings: dict = No
     return get_inline_keyboard(buttons)
 
 
-def get_edit_keyboard(items: list, list_type: str, category: str = None, settings: dict = None):
+def get_edit_keyboard(items: list, list_type: str, category: str = None, settings: dict = None, page: int = 0):
     """
     Создать inline клавиатуру для редактирования списка.
+
+    VK inline клавиатуры: макс 4 строки, макс 5 кнопок в строке.
 
     Args:
         items: Список элементов
         list_type: Тип списка (shopping, todo, study, ideas)
         category: Категория для shopping (magnit, fixprice, other)
         settings: Настройки пользователя
+        page: Текущая страница (0-based)
 
     Returns:
         dict: JSON-структура для inline клавиатуры
     """
+    # Определяем сколько элементов на страницу (укладываемся в 4 строки)
+    # shopping: по 2 элемента в строку → 4 элемента = 2 строки + пагинация + готово = 4
+    # todo/study/ideas: по 2 элемента в строку (✏️ + 🗑 рядом) → 2 элемента = 1 строка + ...
+    if list_type == "shopping":
+        items_per_page = 4
+    else:
+        items_per_page = 2
+
+    total_pages = (len(items) + items_per_page - 1) // items_per_page if items else 1
+    if page >= total_pages:
+        page = total_pages - 1
+
+    start_idx = page * items_per_page
+    end_idx = min(start_idx + items_per_page, len(items))
+    page_items = items[start_idx:end_idx]
+
+    # Формируем кнопки
     buttons = []
 
-    # Ограничиваем до 8 элементов (VK макс 10 строк, 2 для доп кнопок)
-    max_items = 8
-    for item in items[:max_items]:
-        item_id = item['id']
+    if list_type == "shopping":
+        # По 2 элемента в строку
+        for i in range(0, len(page_items), 2):
+            row = []
+            item1 = page_items[i]
+            taken1 = item1['taken']
+            row.append({
+                "text": f"{'✅' if taken1 else '❌'} {item1['item']}",
+                "color": "positive" if taken1 else "negative",
+                "payload": {"type": "toggle_item", "list_type": list_type, "category": category, "item_id": item1['id'], "page": page}
+            })
+            if i + 1 < len(page_items):
+                item2 = page_items[i + 1]
+                taken2 = item2['taken']
+                row.append({
+                    "text": f"{'✅' if taken2 else '❌'} {item2['item']}",
+                    "color": "positive" if taken2 else "negative",
+                    "payload": {"type": "toggle_item", "list_type": list_type, "category": category, "item_id": item2['id'], "page": page}
+                })
+            buttons.append(row)
+    else:
+        # todo/study/ideas: по 2 элемента в строку (✏️ текст | 🗑 Удалить)
+        for i in range(0, len(page_items), 2):
+            row = []
+            for j in range(2):
+                if i + j >= len(page_items):
+                    break
+                item = page_items[i + j]
+                item_id = item['id']
 
-        if list_type == "shopping":
-            item_text = item['item']
-            taken = item['taken']
+                if list_type == "ideas":
+                    item_text = item['idea'] if 'idea' in item.keys() else 'Без названия'
+                else:
+                    item_text = item['task'] if 'task' in item.keys() else 'Без названия'
 
-            if taken:
-                buttons.append([{
-                    "text": f"❌ {item_text}",
-                    "color": "negative",
-                    "payload": {"type": "toggle_item", "list_type": list_type, "category": category, "item_id": item_id}
-                }])
-            else:
-                buttons.append([{
-                    "text": f"✅ {item_text}",
-                    "color": "positive",
-                    "payload": {"type": "toggle_item", "list_type": list_type, "category": category, "item_id": item_id}
-                }])
-        else:
-            if list_type == "ideas":
-                item_text = item['idea'] if 'idea' in item.keys() else 'Без названия'
-            else:
-                item_text = item['task'] if 'task' in item.keys() else 'Без названия'
+                if len(item_text) > 20:
+                    item_text = item_text[:17] + "..."
 
-            # Обрезаем текст до 25 символов (чтобы поместились 2 кнопки)
-            if len(item_text) > 25:
-                item_text = item_text[:22] + "..."
-
-            # Добавляем две кнопки: редактировать и удалить
-            buttons.append([
-                {
+                row.append({
                     "text": f"✏️ {item_text}",
                     "color": "primary",
-                    "payload": {"type": "edit_item", "list_type": list_type, "category": category, "item_id": item_id}
-                },
-                {
-                    "text": "🗑 Удалить",
+                    "payload": {"type": "edit_item", "list_type": list_type, "category": category, "item_id": item_id, "page": page}
+                })
+                row.append({
+                    "text": "🗑",
                     "color": "negative",
-                    "payload": {"type": "delete_item", "list_type": list_type, "category": category, "item_id": item_id}
-                }
-            ])
-    
-    if len(items) > max_items:
-        buttons.append([{
-            "text": f"... и ещё {len(items) - max_items} (удалите через текст)",
-            "color": "secondary",
-            "payload": {"type": "noop"}
-        }])
+                    "payload": {"type": "delete_item", "list_type": list_type, "category": category, "item_id": item_id, "page": page}
+                })
+                # Это уже 2 кнопки = 1 строка для 1 элемента, т.е. 2 элемента = 2 строки
+                buttons.append(row)
+                row = []
 
-    buttons.append([{
-        "text": "🗑 Очистить весь список",
-        "color": "negative",
-        "payload": {"type": "clear_list", "list_type": list_type, "category": category}
-    }])
+    used_rows = len(buttons)
 
-    # Кнопка "Назад" или "Готово"
-    if list_type == "shopping":
-        buttons.append([{
-            "text": "✅ Готово",
-            "color": "positive",
-            "payload": {"type": "back_edit_list", "list_type": list_type, "category": category}
-        }])
-    else:
-        buttons.append([{
-            "text": "🔙 Назад в меню",
-            "color": "secondary",
-            "payload": {"type": "back_to_main"}
-        }])
+    # Пагинация (1 строка)
+    if total_pages > 1:
+        pag_row = []
+        if page > 0:
+            pag_row.append({
+                "text": f"⬅️ {page}/{total_pages - 1}",
+                "color": "secondary",
+                "payload": {"type": "edit_list", "list_type": list_type, "category": category, "page": page - 1}
+            })
+        if page < total_pages - 1:
+            pag_row.append({
+                "text": f"➡️ {page + 1}/{total_pages - 1}",
+                "color": "secondary",
+                "payload": {"type": "edit_list", "list_type": list_type, "category": category, "page": page + 1}
+            })
+        if not pag_row:
+            pag_row.append({
+                "text": f"{page}/{total_pages - 1}",
+                "color": "secondary",
+                "payload": {"type": "noop"}
+            })
+        buttons.append(pag_row)
+        used_rows += 1
+
+    # Очистка + Назад/Готово (1 строка, по 2 кнопки)
+    if used_rows < 4:
+        last_row = []
+        last_row.append({
+            "text": "🗑 Очистить всё",
+            "color": "negative",
+            "payload": {"type": "clear_list", "list_type": list_type, "category": category, "page": page}
+        })
+        if list_type == "shopping":
+            last_row.append({
+                "text": "✅ Готово",
+                "color": "positive",
+                "payload": {"type": "back_edit_list", "list_type": list_type, "category": category}
+            })
+        else:
+            last_row.append({
+                "text": "🔙 Назад",
+                "color": "secondary",
+                "payload": {"type": "back_to_main"}
+            })
+        buttons.append(last_row)
+
+    # Жёсткий лимит VK: макс 4 строки для inline
+    if len(buttons) > 4:
+        buttons = buttons[:4]
 
     return get_inline_keyboard(buttons)
 
@@ -642,7 +694,23 @@ def send_message(vk, user_id: int, message: str, keyboard=None):
     try:
         vk.messages.send(**params)
     except Exception as e:
+        import traceback
         print(f"Ошибка отправки сообщения: {e}")
+        if isinstance(keyboard, dict):
+            rows = keyboard.get('buttons', [])
+            print(f"Keyboard rows count: {len(rows)}")
+            import pprint
+            print("Keyboard structure:")
+            pprint.pprint(keyboard)
+        elif isinstance(keyboard, str):
+            try:
+                rows = json.loads(keyboard).get('buttons', [])
+                print(f"Keyboard rows count: {len(rows)}")
+            except:
+                print("Keyboard rows count: parse error")
+        else:
+            print(f"Keyboard type: {type(keyboard)}")
+        traceback.print_stack()
 
 
 def edit_message(vk, peer_id: int, conversation_message_id: int, message: str, keyboard=None):
@@ -1911,6 +1979,8 @@ def handle_item_edit_input(vk, user_id: int, text: str, state: dict):
     data = state.get("data", {})
     list_type = data.get("editing_list_type")
     item_id = data.get("editing_item_id")
+    page = data.get("page", 0)
+    category = data.get("category")
 
     # Обновляем элемент в базе
     if list_type == "todo":
@@ -1926,8 +1996,43 @@ def handle_item_edit_input(vk, user_id: int, text: str, state: dict):
         message = "✅ Элемент обновлен."
 
     clear_user_state(user_id)
-    settings = run_async(db.get_category_settings(user_id))
-    send_message(vk, user_id, message, keyboard=get_main_keyboard(settings))
+
+    # Возвращаемся к редактированию списка на ту же страницу
+    if list_type in ("todo", "study", "ideas"):
+        if list_type == "todo":
+            items = run_async(db.get_todo_items(user_id))
+        elif list_type == "study":
+            items = run_async(db.get_study_items(user_id))
+        else:
+            items = run_async(db.get_ideas(user_id))
+
+        items_per_page = 4
+        total_pages = (len(items) + items_per_page - 1) // items_per_page if items else 1
+        if page >= total_pages:
+            page = max(total_pages - 1, 0)
+        start_idx = page * items_per_page
+        end_idx = min(start_idx + items_per_page, len(items))
+        page_items = items[start_idx:end_idx]
+
+        settings = run_async(db.get_category_settings(user_id))
+        keyboard = get_edit_keyboard(items, list_type, category, settings, page)
+
+        type_names = {"todo": "📋 Список дел", "study": "📚 Учёба", "ideas": "💡 Идеи"}
+        msg = f"{type_names.get(list_type, 'Список')}:\n\n"
+        for item in page_items:
+            if list_type == "ideas":
+                msg += f"✨ {item['idea']}\n"
+            else:
+                msg += f"❌ {item['task']}\n"
+        if total_pages > 1:
+            msg += f"\n📄 Страница {page + 1}/{total_pages}"
+        msg += f"\nВсего: {len(items)}"
+        msg += f"\n\n{message}"
+
+        send_message(vk, user_id, msg, keyboard=keyboard)
+    else:
+        settings = run_async(db.get_category_settings(user_id))
+        send_message(vk, user_id, message, keyboard=get_main_keyboard(settings))
 
 
 # ============================================================
@@ -1998,6 +2103,7 @@ def handle_callback(vk, event):
     elif action_type == "edit_list":
         list_type = payload.get("list_type")
         category = payload.get("category")
+        page = payload.get("page", 0)
         settings = run_async(db.get_category_settings(user_id))
 
         if list_type == "shopping":
@@ -2011,8 +2117,20 @@ def handle_callback(vk, event):
         else:
             items = []
 
-    
-        keyboard = get_edit_keyboard(items, list_type, category, settings)
+        # Определяем элементы текущей страницы для отображения в сообщении
+        if list_type == "shopping":
+            items_per_page = 7
+        else:
+            items_per_page = 4
+
+        total_pages = (len(items) + items_per_page - 1) // items_per_page if items else 1
+        if page >= total_pages:
+            page = total_pages - 1
+        start_idx = page * items_per_page
+        end_idx = min(start_idx + items_per_page, len(items))
+        page_items = items[start_idx:end_idx]
+
+        keyboard = get_edit_keyboard(items, list_type, category, settings, page)
 
         # Формируем текст
         if list_type == "shopping":
@@ -2022,24 +2140,26 @@ def handle_callback(vk, event):
                 "other": f"📦 {settings['other_name']}"
             }
             message = f"{category_names.get(category, category)}:\n\n"
-            for item in items:
+            for item in page_items:
                 taken_status = "✅" if item['taken'] else "❌"
                 message += f"{taken_status} {item['item']}\n"
         elif list_type == "todo":
             message = "📋 Список дел:\n\n"
-            for item in items:
+            for item in page_items:
                 message += f"❌ {item['task']}\n"
         elif list_type == "study":
             message = "📚 Учёба:\n\n"
-            for item in items:
+            for item in page_items:
                 message += f"❌ {item['task']}\n"
         elif list_type == "ideas":
             message = "💡 Идеи:\n\n"
-            for item in items:
+            for item in page_items:
                 message += f"✨ {item['idea']}\n"
         else:
             message = "Список пуст."
 
+        if total_pages > 1:
+            message += f"\n📄 Страница {page + 1}/{total_pages}"
         message += f"\nВсего: {len(items)}"
 
         send_message(vk, user_id, message, keyboard=keyboard)
@@ -2049,6 +2169,7 @@ def handle_callback(vk, event):
         list_type = payload.get("list_type")
         item_id = payload.get("item_id")
         category = payload.get("category")
+        page = payload.get("page", 0)
 
         if list_type == "shopping":
             is_taken = run_async(db.toggle_shopping_item_taken(user_id, item_id))
@@ -2056,8 +2177,17 @@ def handle_callback(vk, event):
             # Обновляем список
             settings = run_async(db.get_category_settings(user_id))
             items = run_async(db.get_shopping_items(user_id, category))
-        
-            keyboard = get_edit_keyboard(items, "shopping", category, settings)
+
+            # Определяем элементы текущей страницы
+            items_per_page = 7
+            total_pages = (len(items) + items_per_page - 1) // items_per_page if items else 1
+            if page >= total_pages:
+                page = max(total_pages - 1, 0)
+            start_idx = page * items_per_page
+            end_idx = min(start_idx + items_per_page, len(items))
+            page_items = items[start_idx:end_idx]
+
+            keyboard = get_edit_keyboard(items, "shopping", category, settings, page)
 
             category_names = {
                 "magnit": f"🥕 {settings['magnit_name']}",
@@ -2065,9 +2195,11 @@ def handle_callback(vk, event):
                 "other": f"📦 {settings['other_name']}"
             }
             message = f"{category_names.get(category, category)}:\n\n"
-            for item in items:
+            for item in page_items:
                 taken_status = "✅" if item['taken'] else "❌"
                 message += f"{taken_status} {item['item']}\n"
+            if total_pages > 1:
+                message += f"\n📄 Страница {page + 1}/{total_pages}"
             message += f"\nВсего: {len(items)}"
 
             send_message(vk, user_id, message, keyboard=keyboard)
@@ -2077,17 +2209,19 @@ def handle_callback(vk, event):
         list_type = payload.get("list_type")
         item_id = payload.get("item_id")
         category = payload.get("category")
+        page = payload.get("page", 0)
+
+        # Сохраняем страницу в состоянии пользователя
+        state_data = {"editing_list_type": list_type, "editing_item_id": item_id, "page": page}
 
         # Получаем элемент для редактирования
         if list_type == "todo":
             items = run_async(db.get_todo_items(user_id))
             item = next((i for i in items if i['id'] == item_id), None)
             if item:
-                set_user_state(user_id, "editing_item", {
-                    "editing_list_type": list_type,
-                    "editing_item_id": item_id,
-                    "old_text": item['task']
-                })
+                state_data["old_text"] = item['task']
+                state_data["due_date"] = item.get('due_date')
+                set_user_state(user_id, "editing_item", state_data)
                 send_message(vk, user_id, (
                     f"✏️ Редактирование задачи:\n\n"
                     f"Текущий текст: {item['task']}\n\n"
@@ -2098,11 +2232,8 @@ def handle_callback(vk, event):
             items = run_async(db.get_study_items(user_id))
             item = next((i for i in items if i['id'] == item_id), None)
             if item:
-                set_user_state(user_id, "editing_item", {
-                    "editing_list_type": list_type,
-                    "editing_item_id": item_id,
-                    "old_text": item['task']
-                })
+                state_data["old_text"] = item['task']
+                set_user_state(user_id, "editing_item", state_data)
                 send_message(vk, user_id, (
                     f"✏️ Редактирование учебной задачи:\n\n"
                     f"Текущий текст: {item['task']}\n\n"
@@ -2113,11 +2244,8 @@ def handle_callback(vk, event):
             items = run_async(db.get_ideas(user_id))
             item = next((i for i in items if i['id'] == item_id), None)
             if item:
-                set_user_state(user_id, "editing_item", {
-                    "editing_list_type": list_type,
-                    "editing_item_id": item_id,
-                    "old_text": item['idea']
-                })
+                state_data["old_text"] = item['idea']
+                set_user_state(user_id, "editing_item", state_data)
                 send_message(vk, user_id, (
                     f"✏️ Редактирование идеи:\n\n"
                     f"Текущий текст: {item['idea']}\n\n"
@@ -2130,6 +2258,7 @@ def handle_callback(vk, event):
         list_type = payload.get("list_type")
         item_id = payload.get("item_id")
         category = payload.get("category")
+        page = payload.get("page", 0)
 
         if list_type == "shopping":
             run_async(db.delete_shopping_item(user_id, item_id))
@@ -2146,31 +2275,49 @@ def handle_callback(vk, event):
         else:
             items = []
 
-    
+        # Определяем элементы текущей страницы
+        if list_type == "shopping":
+            items_per_page = 7
+        else:
+            items_per_page = 4
+        total_pages = (len(items) + items_per_page - 1) // items_per_page if items else 1
+        if page >= total_pages:
+            page = max(total_pages - 1, 0)
+        start_idx = page * items_per_page
+        end_idx = min(start_idx + items_per_page, len(items))
+        page_items = items[start_idx:end_idx]
+
         settings = run_async(db.get_category_settings(user_id))
-        keyboard = get_edit_keyboard(items, list_type, category, settings)
+        keyboard = get_edit_keyboard(items, list_type, category, settings, page)
 
         # Формируем текст
         if list_type == "shopping":
-            message = "Список покупок:\n\n"
-            for item in items:
+            category_names = {
+                "magnit": f"🥕 {settings['magnit_name']}",
+                "fixprice": f"🏠 {settings['fixprice_name']}",
+                "other": f"📦 {settings['other_name']}"
+            }
+            message = f"{category_names.get(category, category)}:\n\n"
+            for item in page_items:
                 taken_status = "✅" if item['taken'] else "❌"
                 message += f"{taken_status} {item['item']}\n"
         elif list_type == "todo":
             message = "📋 Список дел:\n\n"
-            for item in items:
+            for item in page_items:
                 message += f"❌ {item['task']}\n"
         elif list_type == "study":
             message = "📚 Учёба:\n\n"
-            for item in items:
+            for item in page_items:
                 message += f"❌ {item['task']}\n"
         elif list_type == "ideas":
             message = "💡 Идеи:\n\n"
-            for item in items:
+            for item in page_items:
                 message += f"✨ {item['idea']}\n"
         else:
             message = "Список пуст."
 
+        if total_pages > 1:
+            message += f"\n📄 Страница {page + 1}/{total_pages}"
         message += f"\nВсего: {len(items)}"
 
         send_message(vk, user_id, message, keyboard=keyboard)
@@ -2195,9 +2342,16 @@ def handle_callback(vk, event):
         else:
             message = "✅ Список очищен"
 
-    
+        buttons = [[
+            {
+                "text": "🔙 Назад в меню",
+                "color": "secondary",
+                "payload": {"type": "back_to_main"}
+            }
+        ]]
+        keyboard = get_inline_keyboard(buttons)
         settings = run_async(db.get_category_settings(user_id))
-        send_message(vk, user_id, message, keyboard=get_main_keyboard(settings))
+        send_message(vk, user_id, message, keyboard=keyboard)
 
     # Настройки категорий
     elif action_type == "settings_category":
