@@ -15,11 +15,11 @@ VKAssistant - Бот для ведения списков и заметок ВК
 - Прогноз погоды и уведомления о дожде
 - Гибкие настройки (триггерные слова, видимость кнопок, названия магазинов)
 
-Версия: 1.0.0
+Версия: 1.0.2
 """
 
 # Версия бота
-BOT_VERSION = "1.0.0"
+BOT_VERSION = "1.0.2"
 
 import asyncio
 import subprocess
@@ -3426,6 +3426,35 @@ async def weather_scheduler(vk):
                     try:
                         if weather_daily:
                             await send_weather_report(vk, user_id, city)
+                        
+                        # Проверка уведомлений о дожде
+                        if weather_rain:
+                            weather_data = await get_weather(city)
+                            if weather_data.get("success"):
+                                weather_desc = weather_data.get("description", "").lower()
+                                weather_icon = weather_data.get("icon", "")
+                                
+                                # Проверяем идёт ли дождь или снег
+                                rain_keywords = ["дождь", "ливень", "морось", "дождлив", "снег", "снежин", "метель", "вьюг", "сугроб", "пасмурн"]
+                                is_precipitation = any(keyword in weather_desc for keyword in rain_keywords)
+                                
+                                # Или проверяем по иконке (09x, 10x, 11x, 13x - осадки)
+                                is_precipitation_icon = weather_icon.startswith(("09", "10", "11", "13"))
+                                
+                                if is_precipitation or is_precipitation_icon:
+                                    # Отправляем уведомление о дожде
+                                    umbrella_icon = "☂️" if is_precipitation else "🌨"
+                                    rain_message = (
+                                        f"{umbrella_icon} Внимание! Осадки сегодня\n\n"
+                                        f"📍 {weather_data['city']}\n"
+                                        f"🌡 +{weather_data['temp']}°C (ощущается как +{weather_data['feels_like']}°C)\n"
+                                        f"🌧 {weather_data['description'].capitalize()}\n"
+                                        f"💨 Ветер {weather_data['wind_speed']} м/с\n"
+                                        f"💧 Влажность {weather_data['humidity']}%\n\n"
+                                        f"Не забудьте зонт! ☂️"
+                                    )
+                                    send_message(vk, user_id, rain_message)
+                        
                         last_sent[user_id] = user_date
                     except Exception:
                         pass
