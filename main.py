@@ -3304,6 +3304,53 @@ async def get_weather(city: str) -> dict:
         return {"error": f"Ошибка: {str(e)}"}
 
 
+async def get_forecast(city: str) -> dict:
+    """Получить прогноз с почасовой детализацией."""
+    if not WEATHER_API_KEY or WEATHER_API_KEY == "your_api_key_here":
+        return {"error": "API ключ не настроен"}
+
+    url = "https://api.openweathermap.org/data/2.5/forecast"
+    params = {
+        "q": city,
+        "appid": WEATHER_API_KEY,
+        "units": "metric",
+        "lang": "ru",
+        "cnt": 16
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, timeout=10) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    city_name = data["city"]["name"]
+                    hourly = []
+                    rain_keywords = ["дождь", "ливень", "морось", "дождлив"]
+
+                    for item in data["list"]:
+                        dt = datetime.fromtimestamp(item["dt"])
+                        desc = item["weather"][0]["description"].lower()
+                        icon = item["weather"][0]["icon"]
+                        is_rain = any(kw in desc for kw in rain_keywords) or icon.startswith(("09", "10"))
+
+                        if is_rain:
+                            hourly.append({
+                                "time": dt.strftime("%H:%M"),
+                                "temp": round(item["main"]["temp"]),
+                                "description": item["weather"][0]["description"]
+                            })
+
+                    return {
+                        "success": True,
+                        "city": city_name,
+                        "rain_hours": hourly[:3]
+                    }
+                else:
+                    return {"error": f"Ошибка API (код {response.status})"}
+    except Exception as e:
+        return {"error": f"Ошибка: {str(e)}"}
+
+
 async def send_weather_report(vk, user_id: int, city: str):
     """Отправить отчёт о погоде."""
     weather = await get_weather(city)
@@ -3430,28 +3477,26 @@ async def weather_scheduler(vk):
                         # Проверка уведомлений о дожде
                         if weather_rain:
                             weather_data = await get_weather(city)
+                            forecast_data = await get_forecast(city)
+                            
                             if weather_data.get("success"):
                                 weather_desc = weather_data.get("description", "").lower()
                                 weather_icon = weather_data.get("icon", "")
                                 
-                                # Проверяем идёт ли дождь или снег
-                                rain_keywords = ["дождь", "ливень", "морось", "дождлив", "снег", "снежин", "метель", "вьюг", "сугроб", "пасмурн"]
+                                rain_keywords = ["дождь", "ливень", "морось", "дождлив"]
                                 is_precipitation = any(keyword in weather_desc for keyword in rain_keywords)
-                                
-                                # Или проверяем по иконке (09x, 10x, 11x, 13x - осадки)
-                                is_precipitation_icon = weather_icon.startswith(("09", "10", "11", "13"))
+                                is_precipitation_icon = weather_icon.startswith(("09", "10"))
                                 
                                 if is_precipitation or is_precipitation_icon:
-                                    # Отправляем уведомление о дожде
-                                    umbrella_icon = "☂️" if is_precipitation else "🌨"
+                                    rain_times = ""
+                                    if forecast_data.get("success") and forecast_data.get("rain_hours"):
+                                        times = [f"{r['time']} ({r['temp']}°C)" for r in forecast_data["rain_hours"]]
+                                        rain_times = "\n💧 Дождь: " + ", ".join(times)
+                                    
                                     rain_message = (
-                                        f"{umbrella_icon} Внимание! Осадки сегодня\n\n"
-                                        f"📍 {weather_data['city']}\n"
-                                        f"🌡 +{weather_data['temp']}°C (ощущается как +{weather_data['feels_like']}°C)\n"
-                                        f"🌧 {weather_data['description'].capitalize()}\n"
-                                        f"💨 Ветер {weather_data['wind_speed']} м/с\n"
-                                        f"💧 Влажность {weather_data['humidity']}%\n\n"
-                                        f"Не забудьте зонт! ☂️"
+                                        f"☂️ Не забудь зонт!\n\n"
+                                        f"📍 {weather_data['city']}"
+                                        f"{rain_times}"
                                     )
                                     send_message(vk, user_id, rain_message)
                         
